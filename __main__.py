@@ -8,7 +8,6 @@ from operator import itemgetter, attrgetter
 c = threading.Condition()
 
 flag = 0  # shared between Thread_A and Thread_B
-val = 20
 
 
 class Localizacion:
@@ -34,7 +33,7 @@ class Localizacion:
         self.y = y
 
     def __repr__(self):
-        return repr((self.nombre, self.x, self.y))
+        return repr(self.nombre)
 
 
 class Estacion(Localizacion):
@@ -57,8 +56,6 @@ class Estacion(Localizacion):
         self.distancia = 0
         self.tiempo = 0
 
-    def __repr__(self):
-        return repr(self.nombre)
 
 
 class Conductor:
@@ -120,7 +117,12 @@ estacionesGlobales = [Estacion(nombre="Estación 1", x=1, y=4, numeroPasajeros=1
                       Estacion(nombre="Estación 9", x=2,
                                y=10, numeroPasajeros=6),
                       Estacion(nombre="Estación 10", x=6, y=6, numeroPasajeros=8)]
-conductoresGlobales = [Conductor("Juan", 6), Conductor("Juana", 6), Conductor("Juanito", 6)]
+conductoresGlobales = []
+busesGlobales = []
+for x in range(9):
+    conductoresGlobales.append(Conductor(f"Conductor {x}", 6))
+
+
 estacionesGlobalesDiccionario = {}
 for estacion in estacionesGlobales:
     estacionesGlobalesDiccionario.setdefault(
@@ -176,14 +178,17 @@ class Bus(threading.Thread):
 
     def __init__(self, nombre, conductor, inicio_hora_ruta):
         threading.Thread.__init__(self)
+        self.threadingLock = threading.Lock()
         self.nombre = nombre
-        self.conductor = conductor
         conductor.activo = True
+        conductor.horaInicio = inicio_hora_ruta if conductor.horasTrabajo == 0 else conductor.horaInicio
+        self.conductor = conductor
         self.cantidadPasajeros = 0
-        self.haSidoDesinfectado = False
         self.estacionActual = Estacionamiento
         self.listaEstaciones = copy.deepcopy(estacionesGlobales)
-        self.ruta = []
+        self.ruta = [Estacionamiento]
+        self.activo = False
+        self.cantidadRutasHechas = 0
         self.inicioHoraRuta = inicio_hora_ruta
         self.finHoraRuta = 0
         self.horasEnRuta = 0
@@ -212,10 +217,8 @@ class Bus(threading.Thread):
         """Calcula la distancia desde la estación actual a todas las demás estaciones.
 
         """
-
+        c.acquire()
         global estacionesGlobalesDiccionario
-        if self.conductor.nombre == "Juanito":
-            print("DEBUG")
         for estacionPosible in self.listaEstaciones:
             estacionViable = self.definir_estacion_posible(estacionPosible)
             if estacionViable:
@@ -230,6 +233,7 @@ class Bus(threading.Thread):
                 estacionPosible.tiempo = math.inf
                 estacionPosible.distancia = math.inf
         self.listaEstaciones = sorted(self.listaEstaciones, key=attrgetter('distancia'))
+        c.release()
 
     def definir_estacion_posible(self, estacion_posible):
         """Define si ir a una estación es viable o no.
@@ -249,7 +253,7 @@ class Bus(threading.Thread):
         )
 
         tiempoAdicional = tiempoEnHorasAMantenimiento + self.tiempoEnHorasAEstacionamiento
-
+        c.acquire()
         estacionGlobal = estacionesGlobalesDiccionario[estacion_posible.nombre][0]
         pasajerosABajarse = self.pasajerosABajarse[0] if len(self.pasajerosABajarse) > 0 else 0
         cantidadHorasConductorSiVa = self.conductor.horasTrabajo + self.conductor.tiempoEsperaMantenimiento + \
@@ -277,24 +281,27 @@ class Bus(threading.Thread):
             estacion_posible.razonConductorNoPuedeIr = "visitado"
             estacion_posible.razonBusNoPuedeIr = "visitado"
 
-        if estacionGlobal.vecesVisitado > 6 and estacion_posible.nombre == "Estación 8":
-            print("DEBUG")
+        if self.cantidadRutasHechas >= 3:
+            estacion_posible.busPuedeIr = False
+            estacion_posible.razonBusNoPuedeIr = "cantidad rutas"
 
-        return not((distanciaEnKm == 0 or
-                                          cantidadHorasConductorSiVa > self.conductor.maxHorasTrabajo or
-                                          cantidadHorasBusSiVa > self.maxHorasEnRuta or
-                                          cantidadPasajerosSiVa > self.maxPasajeros or
-                                          estacionGlobal.vecesVisitado >= 6))
+        result = not((distanciaEnKm == 0 or
+                   cantidadHorasConductorSiVa > self.conductor.maxHorasTrabajo or
+                   cantidadHorasBusSiVa > self.maxHorasEnRuta or
+                   cantidadPasajerosSiVa > self.maxPasajeros or
+                   estacionGlobal.vecesVisitado >= 6 or
+                   self.cantidadRutasHechas >= 3))
+        c.release()
+        return result
 
     def validar_opciones(self):
         return self.listaEstaciones[0].tiempo != math.inf
 
     def agregar_estacion(self):
+        c.acquire()
         global estacionesGlobalesDiccionario
         estacionVisitada = self.listaEstaciones[0]
         estacionVisitada.vecesVisitado += 1
-        if self.conductor.nombre == "Juanito":
-            print("DEBUG")
         estacionesGlobalesDiccionario[estacionVisitada.nombre][0].vecesVisitado += 1
 
         # Se bajan los pasajeros a bajarse
@@ -316,6 +323,7 @@ class Bus(threading.Thread):
         self.conductor.horasTrabajo = self.conductor.horasTrabajo + estacionVisitada.tiempo
         # Se recalcula las estaciones posibles desde la estación actual
         self.calcularDistanciasAEstaciones()
+        c.release()
 
     def calcular_distancia_tiempo(self, inicio, fin):
         """Calcula la distancia euclidiana desde un punto inicial a un punto final
@@ -358,7 +366,8 @@ class Bus(threading.Thread):
         """
         distanciaAMantenimiento, tiempoAMantenimiento = self.calcular_distancia_tiempo(self.estacionActual,
                                                                                        Mantenimiento)
-
+        c.acquire()
+        print(f"_____________RESUMEN DE {self.nombre} - RUTA {self.cantidadRutasHechas + 1}______________")
         # Se bajan los pasajeros
         print("Ultima estación:", self.estacionActual)
         print("Cantidad pasajeros:", self.cantidadPasajeros)
@@ -374,8 +383,6 @@ class Bus(threading.Thread):
         self.conductor.horasTrabajo = self.conductor.horasTrabajo + tiempoAMantenimiento + \
                                       self.conductor.tiempoEsperaMantenimiento
 
-        self.haSidoDesinfectado = True
-
         # Se dirige a Estacionamiento
         self.horasEnRuta = self.horasEnRuta + self.tiempoEnHorasAEstacionamiento
         self.finHoraRuta = self.inicioHoraRuta + self.horasEnRuta + self.conductor.tiempoEsperaMantenimiento
@@ -385,65 +392,113 @@ class Bus(threading.Thread):
         self.conductor.horasTrabajo = self.conductor.horasTrabajo + self.tiempoEnHorasAEstacionamiento
 
         # Imprime resultados
-        print("Ruta ", self.ruta, sep="->")
-        print("Horas ", self.horasEnRuta)
-        print("Horas trabajadas ", self.conductor.horasTrabajo)
-        print("Costo ", self.kilometrosRecorridos *
+        print("Ruta ", self.ruta)
+        print("Hora inicio: ", self.inicioHoraRuta)
+        print("Hora fin: ", self.finHoraRuta)
+        print("Horas: ", self.horasEnRuta)
+        print("Detalles conductor ", self.conductor)
+        print("Kilómetros recorridos: ", self.kilometrosRecorridos)
+        print("Costo transporte: ", self.kilometrosRecorridos *
               self.consumoGasolina * self.costoGalon)
 
+        print(f"_____________FIN DE {self.nombre} - RUTA {self.cantidadRutasHechas + 1}______________")
+
+        self.cantidadRutasHechas = self.cantidadRutasHechas + 1
+
         # Se encuentra listo para empezar de nuevo
-        self.haSidoDesinfectado = False
         self.horasEnRuta = 0
+        self.kilometrosRecorridos = 0
+        self.inicioHoraRuta = self.finHoraRuta
         self.ruta = [Estacionamiento]
         self.calcularDistanciasAEstaciones()
+        c.release()
 
-    def asignarConductor(self):
+    def asignar_conductor(self):
+        c.acquire()
         global conductoresGlobales
         listaDisponibles = list(filter(
             lambda x: not x.terminoDia and not x.activo, conductoresGlobales))
         print("Lista disponibles: ", listaDisponibles)
         if len(listaDisponibles) == 0:
+            c.release()
             return False
         else:
             listaDisponibles = sorted(
                 listaDisponibles, key=attrgetter('horasTrabajo'), reverse=True)
             self.conductor = listaDisponibles[0]
+            c.release()
             return True
 
-    def debeCambiarConductor(self):
+    def debe_cambiar_conductor(self):
         conductorTerminoDia = len(list(filter(lambda x: x.conductorPuedeIr, self.listaEstaciones))) == 0
         self.conductor.terminoDia = conductorTerminoDia
         return conductorTerminoDia
 
-    def puedeSeguirRecorriendo(self):
+    def puede_seguir_recorriendo(self):
         return len(list(filter(lambda x: x.busPuedeIr, self.listaEstaciones))) > 0
 
+    def run(self):
+        c.acquire()
+        time.sleep(2)
+
+        return self.recorrer()
+
+
     def recorrer(self):
+        self.activo = True
         self.calcularDistanciasAEstaciones()
+
         while self.listaEstaciones[0].distancia < math.inf:
             self.agregar_estacion()
-            print("Ruta ", self.ruta)
-            print("Horas ", self.horasEnRuta)
-            print("Horas trabajadas ", self.conductor.horasTrabajo)
-            print("Costo ", self.kilometrosRecorridos * self.consumoGasolina * self.costoGalon)
+
+            # print("Ruta ", self.ruta)
+            # print("Horas en ruta ", self.horasEnRuta)
+            # print("Detalles conductor ", self.conductor)
+            # print("Costo ", self.kilometrosRecorridos * self.consumoGasolina * self.costoGalon)
             self.calcularDistanciasAEstaciones()
         self.finalizar_ruta()
+       # c.acquire()
+        print("Estado de estaciones ", end='')
         for estacionRuta in estacionesGlobales:
-            print(estacionRuta.vecesVisitado)
-        if self.debeCambiarConductor():
+            print(estacionRuta.vecesVisitado, ", ", end='', sep="")
+        print()
+        # c.release()
+        if self.debe_cambiar_conductor():
             self.conductor.activo = False
-            resp = self.asignarConductor()
+            resp = self.asignar_conductor()
             if resp is False:
-                return
+                c.release()
+                return False
             else:
                 return self.recorrer()
-        if self.puedeSeguirRecorriendo():
+        if self.puede_seguir_recorriendo():
             return self.recorrer()
         else:
-            return
+            c.release()
+            return False
 
 
-Bus("Bus 1", conductoresGlobales[0], 6).recorrer()
+for a in range(7):
+    busesGlobales.append(Bus(f"Bus {a}", conductoresGlobales[a], 6))
+
+horaInicio = 6
+
+for hilo_ejecucion in busesGlobales:
+    hilo_ejecucion.inicioHoraRuta = horaInicio
+    hilo_ejecucion.start()
+
+for hilo_ejecucion in busesGlobales:
+    hilo_ejecucion.join()
+    c.acquire()
+    horaInicio = hilo_ejecucion.finHoraRuta
+    c.release()
+
+
+
+
+
+
+
 
 # def run(self):
 #     global flag
