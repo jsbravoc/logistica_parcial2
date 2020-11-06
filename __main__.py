@@ -1,13 +1,12 @@
-from math import isfinite
-import threading
-import time
-import math
+""" Implementación heurística Parcial 2 - Logística. """
+__author__ = "Juan Sebastián Bravo <js.bravo@uniandes.edu.co"
+
 import copy
-from operator import itemgetter, attrgetter
+import math
+import threading
+from operator import attrgetter
 
 c = threading.Condition()
-
-flag = 0  # shared between Thread_A and Thread_B
 
 
 class Localizacion:
@@ -49,13 +48,12 @@ class Estacion(Localizacion):
 
     """
 
-    def __init__(self, numeroPasajeros, *args, **kw):
+    def __init__(self, numero_pasajeros, *args, **kw):
         super().__init__(*args, **kw)
-        self.numeroPasajeros = numeroPasajeros
+        self.numeroPasajeros = numero_pasajeros
         self.vecesVisitado = 0
         self.distancia = 0
         self.tiempo = 0
-
 
 
 class Conductor:
@@ -83,15 +81,14 @@ class Conductor:
 
     """
 
-    def __init__(self, nombre, horaInicio):
+    def __init__(self, nombre, hora_inicio):
         self.nombre = nombre
-        self.horaInicio = horaInicio
+        self.horaInicio = hora_inicio
         self.horasTrabajo = 0
         self.activo = False
         self.maxHorasTrabajo = 10
         self.tiempoEsperaMantenimiento = 50 / 60
         self.terminoDia = False
-
 
     def __repr__(self):
         return repr((self.nombre, "Horas de trabajo", self.horasTrabajo))
@@ -99,29 +96,28 @@ class Conductor:
 
 # Variables globales
 probabilidadDeBajarse = [0.2, 0.5, 0.3]
-estacionesGlobales = [Estacion(nombre="Estación 1", x=1, y=4, numeroPasajeros=10),
+estacionesGlobales = [Estacion(nombre="Estación 1", x=1, y=4, numero_pasajeros=10),
                       Estacion(nombre="Estación 2", x=1,
-                               y=7, numeroPasajeros=6),
+                               y=7, numero_pasajeros=6),
                       Estacion(nombre="Estación 3", x=2,
-                               y=9, numeroPasajeros=7),
+                               y=9, numero_pasajeros=7),
                       Estacion(nombre="Estación 4", x=6,
-                               y=-1, numeroPasajeros=5),
+                               y=-1, numero_pasajeros=5),
                       Estacion(nombre="Estación 5", x=4,
-                               y=-5, numeroPasajeros=5),
+                               y=-5, numero_pasajeros=5),
                       Estacion(nombre="Estación 6", x=4,
-                               y=1, numeroPasajeros=8),
+                               y=1, numero_pasajeros=8),
                       Estacion(nombre="Estación 7", x=-6,
-                               y=-4, numeroPasajeros=10),
+                               y=-4, numero_pasajeros=10),
                       Estacion(nombre="Estación 8", x=7,
-                               y=9, numeroPasajeros=10),
+                               y=9, numero_pasajeros=10),
                       Estacion(nombre="Estación 9", x=2,
-                               y=10, numeroPasajeros=6),
-                      Estacion(nombre="Estación 10", x=6, y=6, numeroPasajeros=8)]
+                               y=10, numero_pasajeros=6),
+                      Estacion(nombre="Estación 10", x=6, y=6, numero_pasajeros=8)]
 conductoresGlobales = []
 busesGlobales = []
 for x in range(9):
     conductoresGlobales.append(Conductor(f"Conductor {x}", 6))
-
 
 estacionesGlobalesDiccionario = {}
 for estacion in estacionesGlobales:
@@ -202,10 +198,9 @@ class Bus(threading.Thread):
         self.kilometrosRecorridos = 0
         self.distanciaEnKmAEstacionamiento = 0
         self.tiempoEnHorasAEstacionamiento = 0
-        self.calcularDistanciaYTiempoAEstacionamiento()
+        self.calcular_distancia_tiempo_estacionamiento()
 
-
-    def calcularDistanciaYTiempoAEstacionamiento(self):
+    def calcular_distancia_tiempo_estacionamiento(self):
         """Calcula la distancia y tiempo desde Mantenimiento a Estacionamiento.
 
         """
@@ -213,12 +208,51 @@ class Bus(threading.Thread):
         self.distanciaEnKmAEstacionamiento, self.tiempoEnHorasAEstacionamiento = self.calcular_distancia_tiempo(
             Mantenimiento, Estacionamiento)
 
-    def calcularDistanciasAEstaciones(self):
+    def estacion_mas_cercana_viable(self):
+        c.acquire()
+        minEstacionViable = None
+        minTiempo = math.inf
+        minDistancia = None
+        if self.estacionActual in self.listaEstaciones:
+            for estacionARevisar in self.listaEstaciones:
+                distanciaEnKm, tiempoEnHoras = self.calcular_distancia_tiempo(
+                    self.estacionActual,
+                    estacionARevisar
+                )
+                if distanciaEnKm == 0:
+                    continue
+                distanciaEnKmAMantenimiento, tiempoEnHorasAMantenimiento = self.calcular_distancia_tiempo(
+                    estacionARevisar,
+                    Mantenimiento
+                )
+
+                tiempoAdicional = tiempoEnHorasAMantenimiento + self.tiempoEnHorasAEstacionamiento
+
+                pasajerosABajarse = self.pasajerosABajarse[0] if len(self.pasajerosABajarse) > 0 else 0
+                pasajerosABajarse2 = self.pasajerosABajarse[1] if len(self.pasajerosABajarse) > 1 else 0
+                cantidadHorasConductorSiVa = self.conductor.horasTrabajo + self.conductor.tiempoEsperaMantenimiento + \
+                                             2 * tiempoEnHoras + tiempoAdicional
+                cantidadHorasBusSiVa = self.horasEnRuta + 2 * tiempoEnHoras + tiempoAdicional
+                cantidadPasajerosSiVa1 = self.cantidadPasajeros + estacionARevisar.numeroPasajeros - pasajerosABajarse
+                cantidadPasajerosSiVa2 = cantidadPasajerosSiVa1 + self.estacionActual.numeroPasajeros - pasajerosABajarse2
+
+                if cantidadPasajerosSiVa1 < self.maxPasajeros and cantidadPasajerosSiVa2 < self.maxPasajeros and \
+                        cantidadHorasBusSiVa < self.maxHorasEnRuta and cantidadHorasConductorSiVa < \
+                        self.conductor.maxHorasTrabajo and tiempoEnHoras < minTiempo:
+                    minEstacionViable = estacionARevisar
+                    minTiempo = tiempoEnHoras
+                    minDistancia = distanciaEnKm
+
+        c.release()
+        return [minEstacionViable, minTiempo, minDistancia]
+
+    def calcular_distancias_estaciones(self):
         """Calcula la distancia desde la estación actual a todas las demás estaciones.
 
         """
         c.acquire()
         global estacionesGlobalesDiccionario
+        existeEstacionViable = False
         for estacionPosible in self.listaEstaciones:
             estacionViable = self.definir_estacion_posible(estacionPosible)
             if estacionViable:
@@ -228,10 +262,22 @@ class Bus(threading.Thread):
                 )
                 estacionPosible.tiempo = tiempoEnHoras
                 estacionPosible.distancia = distanciaEnKm
+                existeEstacionViable = True
 
             else:
                 estacionPosible.tiempo = math.inf
                 estacionPosible.distancia = math.inf
+
+        if not existeEstacionViable:
+            nodo, tiempo, distancia = self.estacion_mas_cercana_viable()
+
+            if nodo is not None:
+                for estacionPosible in self.listaEstaciones:
+                    if estacionPosible.nombre == nodo.nombre:
+                        estacionPosible.tiempo = tiempo
+                        estacionPosible.distancia = distancia
+                        break
+
         self.listaEstaciones = sorted(self.listaEstaciones, key=attrgetter('distancia'))
         c.release()
 
@@ -285,12 +331,12 @@ class Bus(threading.Thread):
             estacion_posible.busPuedeIr = False
             estacion_posible.razonBusNoPuedeIr = "cantidad rutas"
 
-        result = not((distanciaEnKm == 0 or
-                   cantidadHorasConductorSiVa > self.conductor.maxHorasTrabajo or
-                   cantidadHorasBusSiVa > self.maxHorasEnRuta or
-                   cantidadPasajerosSiVa > self.maxPasajeros or
-                   estacionGlobal.vecesVisitado >= 6 or
-                   self.cantidadRutasHechas >= 3))
+        result = not ((distanciaEnKm == 0 or
+                       cantidadHorasConductorSiVa > self.conductor.maxHorasTrabajo or
+                       cantidadHorasBusSiVa > self.maxHorasEnRuta or
+                       cantidadPasajerosSiVa > self.maxPasajeros or
+                       estacionGlobal.vecesVisitado >= 6 or
+                       self.cantidadRutasHechas >= 3))
         c.release()
         return result
 
@@ -314,15 +360,15 @@ class Bus(threading.Thread):
         # Se suma el tiempo en ruta
         self.horasEnRuta = self.horasEnRuta + estacionVisitada.tiempo
         # Se cambia la estación actual
-        self.estacionActual = self.listaEstaciones[0]
+        self.estacionActual = estacionVisitada
         # Se agrega la estación a la ruta
-        self.ruta.append(self.listaEstaciones[0])
+        self.ruta.append(estacionVisitada)
         # Se actualiza la cantidad de kilómetros recorridos
         self.kilometrosRecorridos = self.kilometrosRecorridos + estacionVisitada.distancia
         # Se actualiza la cantidad de horas trabajadas
         self.conductor.horasTrabajo = self.conductor.horasTrabajo + estacionVisitada.tiempo
         # Se recalcula las estaciones posibles desde la estación actual
-        self.calcularDistanciasAEstaciones()
+        self.calcular_distancias_estaciones()
         c.release()
 
     def calcular_distancia_tiempo(self, inicio, fin):
@@ -410,7 +456,7 @@ class Bus(threading.Thread):
         self.kilometrosRecorridos = 0
         self.inicioHoraRuta = self.finHoraRuta
         self.ruta = [Estacionamiento]
-        self.calcularDistanciasAEstaciones()
+        self.calcular_distancias_estaciones()
         c.release()
 
     def asignar_conductor(self):
@@ -439,42 +485,33 @@ class Bus(threading.Thread):
 
     def run(self):
         c.acquire()
-        time.sleep(2)
-
-        return self.recorrer()
-
+        resp = self.recorrer()
+        c.release()
 
     def recorrer(self):
+
         self.activo = True
-        self.calcularDistanciasAEstaciones()
+        self.calcular_distancias_estaciones()
 
-        while self.listaEstaciones[0].distancia < math.inf:
-            self.agregar_estacion()
-
-            # print("Ruta ", self.ruta)
-            # print("Horas en ruta ", self.horasEnRuta)
-            # print("Detalles conductor ", self.conductor)
-            # print("Costo ", self.kilometrosRecorridos * self.consumoGasolina * self.costoGalon)
-            self.calcularDistanciasAEstaciones()
-        self.finalizar_ruta()
-       # c.acquire()
+        if self.cantidadRutasHechas < 3 and len(list(filter(lambda est: est.vecesVisitado < 6, estacionesGlobales))) > 0:
+            while self.listaEstaciones[0].distancia < math.inf:
+                self.agregar_estacion()
+                self.calcular_distancias_estaciones()
+            self.finalizar_ruta()
         print("Estado de estaciones ", end='')
         for estacionRuta in estacionesGlobales:
             print(estacionRuta.vecesVisitado, ", ", end='', sep="")
         print()
-        # c.release()
         if self.debe_cambiar_conductor():
             self.conductor.activo = False
             resp = self.asignar_conductor()
             if resp is False:
-                c.release()
                 return False
             else:
                 return self.recorrer()
         if self.puede_seguir_recorriendo():
             return self.recorrer()
         else:
-            c.release()
             return False
 
 
@@ -492,13 +529,6 @@ for hilo_ejecucion in busesGlobales:
     c.acquire()
     horaInicio = hilo_ejecucion.finHoraRuta
     c.release()
-
-
-
-
-
-
-
 
 # def run(self):
 #     global flag
